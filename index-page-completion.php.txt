@@ -1,0 +1,203 @@
+$result_keuntungan_kemarin = mysqli_query($conn, $query_keuntungan_kemarin);
+$row_keuntungan_kemarin = mysqli_fetch_assoc($result_keuntungan_kemarin);
+$total_keuntungan_kemarin = $row_keuntungan_kemarin['total_keuntungan'] ? $row_keuntungan_kemarin['total_keuntungan'] : 0;
+
+// Hitung persentase perubahan
+if ($total_keuntungan_kemarin > 0) {
+    $percentage = (($total_keuntungan - $total_keuntungan_kemarin) / $total_keuntungan_kemarin) * 100;
+    $class = $percentage >= 0 ? 'positive' : 'negative';
+    $sign = $percentage >= 0 ? '+' : '';
+    echo "<span class='$class'>$sign" . number_format($percentage, 1) . "% dari kemarin</span>";
+} else {
+    echo "Tidak ada data kemarin";
+}
+?>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">Biaya Bahan Hari Ini</div>
+                            <i class="fas fa-shopping-cart" style="color: #FF9800; font-size: 24px;"></i>
+                        </div>
+                        <div class="card-value"><?php echo formatRupiah($total_biaya); ?></div>
+                        <div class="card-subtitle">
+                            <?php
+                            // Ambil data biaya kemarin
+                            $query_biaya_kemarin = "SELECT SUM(total) as total_biaya FROM pembelian_bahan WHERE DATE(tanggal) = '$yesterday' AND status = 'Selesai'";
+                            $result_biaya_kemarin = mysqli_query($conn, $query_biaya_kemarin);
+                            $row_biaya_kemarin = mysqli_fetch_assoc($result_biaya_kemarin);
+                            $total_biaya_kemarin = $row_biaya_kemarin['total_biaya'] ? $row_biaya_kemarin['total_biaya'] : 0;
+                            
+                            // Hitung persentase perubahan
+                            if ($total_biaya_kemarin > 0) {
+                                $percentage = (($total_biaya - $total_biaya_kemarin) / $total_biaya_kemarin) * 100;
+                                $class = $percentage <= 0 ? 'positive' : 'negative';
+                                $sign = $percentage >= 0 ? '+' : '';
+                                echo "<span class='$class'>$sign" . number_format($percentage, 1) . "% dari kemarin</span>";
+                            } else {
+                                echo "Tidak ada data kemarin";
+                            }
+                            ?>
+                        </div>
+                    </div>
+                    
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">Menu Terlaris Hari Ini</div>
+                            <i class="fas fa-trophy" style="color: #FF9800; font-size: 24px;"></i>
+                        </div>
+                        <div class="card-value">
+                            <?php 
+                            if ($menu_laris) {
+                                echo $menu_laris['nama'];
+                            } else {
+                                echo "Belum ada data";
+                            }
+                            ?>
+                        </div>
+                        <div class="card-subtitle">
+                            <?php 
+                            if ($menu_laris) {
+                                echo "Terjual " . $menu_laris['jumlah_terjual'] . " porsi hari ini";
+                            } else {
+                                echo "&nbsp;";
+                            }
+                            ?>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts -->
+                <div class="charts">
+                    <div class="card chart-container">
+                        <div class="card-header">
+                            <div class="card-title">Penjualan 7 Hari Terakhir</div>
+                        </div>
+                        <canvas id="salesChart"></canvas>
+                    </div>
+                    
+                    <div class="card chart-container">
+                        <div class="card-header">
+                            <div class="card-title">Keuntungan vs Biaya</div>
+                        </div>
+                        <canvas id="profitChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- Recent Transactions -->
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">Transaksi Terbaru</div>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>No Transaksi</th>
+                                    <th>Tanggal</th>
+                                    <th>Menu</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php
+                                if (mysqli_num_rows($result_transaksi) > 0) {
+                                    while ($row = mysqli_fetch_assoc($result_transaksi)) {
+                                        $status_class = '';
+                                        if ($row['status'] == 'Selesai') {
+                                            $status_class = 'positive';
+                                        } elseif ($row['status'] == 'Batal') {
+                                            $status_class = 'negative';
+                                        }
+                                        
+                                        echo "<tr>";
+                                        echo "<td>" . $row['nomor_transaksi'] . "</td>";
+                                        echo "<td>" . date('d/m/Y H:i', strtotime($row['tanggal'])) . "</td>";
+                                        echo "<td>" . $row['menu_list'] . "</td>";
+                                        echo "<td>" . formatRupiah($row['total']) . "</td>";
+                                        echo "<td class='$status_class'>" . $row['status'] . "</td>";
+                                        echo "</tr>";
+                                    }
+                                } else {
+                                    echo "<tr><td colspan='5' style='text-align: center;'>Tidak ada transaksi</td></tr>";
+                                }
+                                ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Chart Penjualan 7 Hari Terakhir
+        const salesCtx = document.getElementById('salesChart').getContext('2d');
+        const salesChart = new Chart(salesCtx, {
+            type: 'line',
+            data: {
+                labels: <?php echo json_encode($data_tanggal); ?>,
+                datasets: [{
+                    label: 'Penjualan',
+                    data: <?php echo json_encode($data_penjualan); ?>,
+                    backgroundColor: 'rgba(76, 175, 80, 0.2)',
+                    borderColor: 'rgba(76, 175, 80, 1)',
+                    borderWidth: 2,
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'Rp ' + value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Chart Untung vs Biaya
+        const profitCtx = document.getElementById('profitChart').getContext('2d');
+        const profitChart = new Chart(profitCtx, {
+            type: 'bar',
+            data: {
+                labels: <?php echo json_encode($data_tanggal); ?>,
+                datasets: [
+                    {
+                        label: 'Keuntungan',
+                        data: <?php echo json_encode($data_keuntungan); ?>,
+                        backgroundColor: 'rgba(76, 175, 80, 0.8)',
+                    },
+                    {
+                        label: 'Biaya',
+                        data: <?php echo json_encode($data_biaya); ?>,
+                        backgroundColor: 'rgba(255, 152, 0, 0.8)',
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return 'Rp ' + value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

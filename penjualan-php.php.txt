@@ -1,0 +1,599 @@
+<?php
+// penjualan.php
+session_start();
+require_once 'config.php';
+
+// Cek apakah user sudah login
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit;
+}
+
+// Ambil data user
+$user_id = $_SESSION['user_id'];
+$user_name = $_SESSION['nama'];
+$user_role = $_SESSION['role'];
+
+// Proses tambah transaksi
+if (isset($_POST['tambah_transaksi'])) {
+    $menu_ids = $_POST['menu_id'];
+    $jumlah = $_POST['jumlah'];
+    $subtotal = $_POST['subtotal'];
+    $keuntungan = $_POST['keuntungan'];
+    $total = $_POST['total'];
+    $pembayaran = clean($_POST['pembayaran']);
+    $kembali = $_POST['kembali'];
+    
+    // Generate nomor transaksi
+    $today = date('Ymd');
+    $query_count = "SELECT COUNT(*) as count FROM transaksi WHERE nomor_transaksi LIKE '$today%'";
+    $result_count = mysqli_query($conn, $query_count);
+    $row_count = mysqli_fetch_assoc($result_count);
+    $count = $row_count['count'] + 1;
+    $nomor_transaksi = $today . str_pad($count, 4, '0', STR_PAD_LEFT);
+    
+    // Insert transaksi
+    $query_transaksi = "INSERT INTO transaksi (nomor_transaksi, user_id, tanggal, total, keuntungan, pembayaran, kembali, status) 
+                       VALUES ('$nomor_transaksi', $user_id, NOW(), $total, $keuntungan, '$pembayaran', $kembali, 'Selesai')";
+    
+    if (mysqli_query($conn, $query_transaksi)) {
+        $transaksi_id = mysqli_insert_id($conn);
+        
+        // Insert detail transaksi
+        for ($i = 0; $i < count($menu_ids); $i++) {
+            $menu_id = $menu_ids[$i];
+            $qty = $jumlah[$i];
+            $sub = $subtotal[$i];
+            $untung = $keuntungan[$i];
+            
+            $query_detail = "INSERT INTO detail_transaksi (transaksi_id, menu_id, jumlah, subtotal, keuntungan) 
+                            VALUES ($transaksi_id, $menu_id, $qty, $sub, $untung)";
+            mysqli_query($conn, $query_detail);
+            
+            // Update stok bahan
+            $query_bahan = "SELECT mb.bahan_id, mb.jumlah FROM menu_bahan mb WHERE mb.menu_id = $menu_id";
+            $result_bahan = mysqli_query($conn, $query_bahan);
+            
+            while ($bahan = mysqli_fetch_assoc($result_bahan)) {
+                $bahan_id = $bahan['bahan_id'];
+                $jumlah_pakai = $bahan['jumlah'] * $qty;
+                
+                $query_update_stok = "UPDATE bahan SET stok = stok - $jumlah_pakai WHERE id = $bahan_id";
+                mysqli_query($conn, $query_update_stok);
+            }
+        }
+        
+        // Redirect ke halaman penjualan
+        header("Location: penjualan.php?success=1");
+        exit;
+    } else {
+        $error = "Gagal menambahkan transaksi: " . mysqli_error($conn);
+    }
+}
+
+// Ambil data menu
+$query_menu = "SELECT m.id, m.nama, m.harga, m.harga_pokok, m.deskripsi, m.kategori_id, k.nama as kategori,
+              (SELECT SUM(mb.jumlah * b.harga / b.satuan_konversi) FROM menu_bahan mb JOIN bahan b ON mb.bahan_id = b.id WHERE mb.menu_id = m.id) as harga_bahan
+              FROM menu m
+              JOIN kategori k ON m.kategori_id = k.id
+              WHERE m.status = 'aktif'
+              ORDER BY k.nama, m.nama";
+$result_menu = mysqli_query($conn, $query_menu);
+
+// Ambil data kategori
+$query_kategori = "SELECT * FROM kategori WHERE status = 'aktif' ORDER BY nama";
+$result_kategori = mysqli_query($conn, $query_kategori);
+$data_kategori = array();
+while ($row = mysqli_fetch_assoc($result_kategori)) {
+    $data_kategori[] = $row;
+}
+
+// Ambil transaksi hari ini
+$today = date('Y-m-d');
+$query_transaksi = "SELECT t.id, t.nomor_transaksi, t.tanggal, t.total, t.pembayaran, t.kembali, t.status,
+                    GROUP_CONCAT(CONCAT(dt.jumlah, 'x ', m.nama) SEPARATOR ', ') as menu_list,
+                    u.nama as kasir
+                    FROM transaksi t
+                    JOIN detail_transaksi dt ON t.id = dt.transaksi_id
+                    JOIN menu m ON dt.menu_id = m.id
+                    JOIN users u ON t.user_id = u.id
+                    WHERE DATE(t.tanggal) = '$today'
+                    GROUP BY t.id
+                    ORDER BY t.tanggal DESC";
+$result_transaksi = mysqli_query($conn, $query_transaksi);
+?>
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penjualan - Admin Panel Toko Makanan</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <style>
+        :root {
+            --primary-color: #4CAF50;
+            --secondary-color: #2E7D32;
+            --accent-color: #8BC34A;
+            --text-color: #333;
+            --light-color: #f4f4f4;
+            --danger-color: #f44336;
+            --warning-color: #FF9800;
+            --success-color: #4CAF50;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #f5f5f5;
+            color: var(--text-color);
+        }
+        
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            width: 250px;
+            background-color: var(--primary-color);
+            color: white;
+            height: 100vh;
+            position: fixed;
+            transition: 0.3s;
+        }
+        
+        .logo {
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .logo h2 {
+            font-size: 24px;
+        }
+        
+        .menu {
+            padding: 20px 0;
+        }
+        
+        .menu-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            transition: 0.3s;
+            display: flex;
+            align-items: center;
+        }
+        
+        .menu-item:hover, .menu-item.active {
+            background-color: var(--secondary-color);
+        }
+        
+        .menu-item i {
+            margin-right: 10px;
+        }
+        
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 250px;
+            padding: 20px;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+        
+        .page-title {
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+        }
+        
+        .user-info img {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+        
+        /* Kasir */
+        .kasir-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+        }
+        
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .menu-card {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            padding: 15px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        
+        .menu-card:hover {
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            transform: translateY(-5px);
+        }
+        
+        .menu-card h3 {
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+        
+        .menu-card .price {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
+        .menu-card .description {
+            margin-top: 5px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .kategori-filter {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            padding-bottom: 10px;
+        }
+        
+        .kategori-btn {
+            padding: 8px 15px;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        
+        .kategori-btn.active {
+            background-color: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+        
+        .cart {
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            height: calc(100vh - 100px);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .cart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .cart-items {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+        
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .cart-item-info {
+            flex: 1;
+        }
+        
+        .cart-item-name {
+            font-weight: 500;
+        }
+        
+        .cart-item-price {
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .cart-item-controls {
+            display: flex;
+            align-items: center;
+        }
+        
+        .cart-item-qty {
+            width: 40px;
+            text-align: center;
+            margin: 0 10px;
+        }
+        
+        .cart-item-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: none;
+            background-color: #f0f0f0;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .cart-item-remove {
+            color: var(--danger-color);
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        
+        .cart-summary {
+            border-top: 1px solid #ddd;
+            padding-top: 15px;
+        }
+        
+        .cart-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .cart-total {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .cart-payment {
+            margin-top: 15px;
+        }
+        
+        .cart-payment input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+        
+        .cart-payment button {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .cart-payment button:hover {
+            background-color: var(--secondary-color);
+        }
+        
+        /* Transaction List */
+        .transaction-list {
+            margin-top: 30px;
+        }
+        
+        .transaction-title {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 15px;
+        }
+        
+        .table-container {
+            overflow-x: auto;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        thead {
+            background-color: var(--light-color);
+        }
+        
+        tbody tr:hover {
+            background-color: #f9f9f9;
+        }
+        
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 10% auto;
+            padding: 20px;
+            border-radius: 10px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .modal-title {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .close-btn {
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .modal-body {
+            margin-bottom: 20px;
+        }
+        
+        .receipt {
+            font-family: monospace;
+            white-space: pre-line;
+        }
+        
+        .modal-footer {
+            text-align: right;
+        }
+        
+        .modal-btn {
+            padding: 10px 15px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-left: 10px;
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 992px) {
+            .sidebar {
+                width: 70px;
+                overflow: hidden;
+            }
+            
+            .sidebar .logo h2, .menu-item span {
+                display: none;
+            }
+            
+            .main-content {
+                margin-left: 70px;
+            }
+            
+            .kasir-container {
+                grid-template-columns: 1fr;
+            }
+            
+            .cart {
+                height: auto;
+                margin-bottom: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">
+                <i class="fas fa-utensils" style="font-size: 32px;"></i>
+                <h2>Toko Makanan</h2>
+            </div>
+            <div class="menu">
+                <a href="index.php" class="menu-item">
+                    <i class="fas fa-tachometer-alt"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="penjualan.php" class="menu-item active">
+                    <i class="fas fa-cash-register"></i>
+                    <span>Penjualan</span>
+                </a>
+                <a href="keuangan.php" class="menu-item">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Laporan Keuangan</span>
+                </a>
+                <a href="inventory.php" class="menu-item">
+                    <i class="fas fa-boxes"></i>
+                    <span>Inventory</span>
+                </a>
+                <a href="statistik.php" class="menu-item">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Statistik</span>
+                </a>
+                <?php if ($user_role == 'admin'): ?>
+                <a href="pengaturan.php" class="menu-item">
+                    <i class="fas fa-cog"></i>
+                    <span>Pengaturan</span>
+                </a>
+                <?php endif; ?>
+                <a href="logout.php" class="menu-item">
+                    <i class="fas fa-sign-out-alt"></i>
+                    <span>Logout</span>
+                </a>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="header">
+                <div class="page-title">Penjualan</div>
+                <div class="user-info">
+                    <i class="fas fa-user-circle" style="font-size: 32px; color: #4CAF50;"></i>
+                    <span><?php echo $user_name; ?></span>
+                </div>
+            </div>
+            
+            <?php if (isset($_GET['success'])): ?>
+            <div class="success-message">
+                <i class="fas fa-check-circle"></i> Transaksi berhasil disimpan!
+            </div>
+            <?php endif; ?>
+            
+            <div class="kasir-container">
+                <div class="menu-section">
+                    <div class="kategori-filter">
+                        <button class="kategori-btn active" data-kategori="semua">Semua</button>
+                        <?php foreach ($data_kategori as $kategori): ?>
+                        <button class="kategori-btn" data-kategori="<?php echo $kategori['id']; ?>"><?php echo $kategori['nama']; ?></button>
+                        <?php endforeach; ?>
+                    </div>
